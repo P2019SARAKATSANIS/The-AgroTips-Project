@@ -1,6 +1,3 @@
-#This is the code used from the implementation of the Main program of AgroTips. 
-
-
 import ibm_boto3
 from ibm_botocore.client import Config
 import sqlite3
@@ -19,7 +16,6 @@ import random
 import json
 import time
 import requests
-import os
 import smtplib
 import json
 from email.message import EmailMessage
@@ -28,11 +24,12 @@ import base64
 from threading import Event
 from typing import Dict, Any
 
-email_sender = 'your email (the code that is used is created for outlook emails, but you can change it by selecting a different service in the follwoing line: with smtplib.SMTP('smtp.office365.com', 587) as smtp:)'
 
-email_password = 'your credential key'
+email_sender = 'youremail@gmail.com'
 
-email_receiver = 'The user's email'
+email_password = 'Turn on two-factor-authentication and generate an app password. Use that app password here'
+
+email_receiver = 'The users email'
 
 subject = 'Check Out Your New AgroTips Report!!'
 
@@ -103,10 +100,12 @@ def preprocess_image(image_path):
     image_tensor = tf.convert_to_tensor(image_array, dtype=tf.float32)
 
     #Changing the contrast of the image to 0.55, in order to reveal more information
-    image_tensor = tf.image.adjust_contrast(image_tensor, contrast_factor=0.55)
+    image_tensor = tf.image.adjust_contrast(image_tensor, contrast_factor=0.60)
+
+    brightness_factor = 0.50
 
     #Changing the brightness of the image in order extract more information
-    image_tensor = tf.image.adjust_brightness(image_tensor, brightness_factor=0.55)
+    image_tensor = tf.image.adjust_brightness(image_tensor, brightness_factor)
 
     # Add batch dimension (model expects a batch, even if it's a batch of 1)
     data = np.expand_dims(image_tensor, axis=0)
@@ -148,7 +147,52 @@ class F1Score(metrics.Metric):
 
 
 
+class ConfusionMatrixMetric(tf.keras.metrics.Metric):
+    def __init__(self, num_classes, name='confusion_matrix', **kwargs):
+        super(ConfusionMatrixMetric, self).__init__(name=name, **kwargs)
+        self.num_classes = num_classes
+        self.confusion_matrix = self.add_weight(name='conf_matrix', shape=(num_classes, num_classes), initializer='zeros', dtype=tf.int32)
 
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        # Convert true and predicted labels to 1D
+        y_true = tf.reshape(y_true, [-1])
+        y_pred = tf.argmax(y_pred, axis=-1)
+
+        # Compute confusion matrix for the batch
+        batch_conf_matrix = tf.math.confusion_matrix(y_true, y_pred, num_classes=self.num_classes)
+
+        # Update confusion matrix state (accumulated over all batches)
+        self.confusion_matrix.assign_add(batch_conf_matrix)
+
+    def result(self):
+        # For simplicity, return the overall accuracy derived from the confusion matrix
+        cm = self.confusion_matrix
+        diagonal_sum = tf.reduce_sum(tf.linalg.diag_part(cm))  # Sum of diagonal values (true positives)
+        total_sum = tf.reduce_sum(cm)  # Sum of all values (total predictions)
+
+        return diagonal_sum / total_sum  # Return accuracy based on confusion matrix
+
+    def reset_states(self):
+        # Reset the confusion matrix at the start of each epoch
+        self.confusion_matrix.assign(tf.zeros((self.num_classes, self.num_classes), dtype=tf.int32))
+
+    def print_confusion_matrix(self):
+        # Convert the confusion matrix tensor to a NumPy array for better printing
+        cm = self.confusion_matrix.numpy()
+        np.set_printoptions(threshold=np.inf)  # Ensure full matrix is printed without truncation
+        print("\nConfusion Matrix at the end of the epoch:\n")
+        for row in cm:
+            print(' '.join(f'{int(val):4}' for val in row))  # Print each row with proper spacing
+
+
+class PrintConfusionMatrixCallback(tf.keras.callbacks.Callback):
+    def __init__(self, confusion_matrix_metric):
+        super().__init__()
+        self.confusion_matrix_metric = confusion_matrix_metric
+
+    def on_epoch_end(self, epoch, logs=None):
+        # Print the confusion matrix at the end of the epoch
+        self.confusion_matrix_metric.print_confusion_matrix()
 
 
 
@@ -166,8 +210,8 @@ try:
 
     broker = "test.mosquitto.org"
     port = 1883
-    topic = "Example-AgroTips132/upload"
-    image_path = "/.../your_image_path.jpg"  # Path to the image to be uploaded
+    topic = "AgroTips132/upload"
+    image_path = "your image path"  # Path to the image to be uploaded
     download_path = "downloaded_image.jpg" #Path to the image that will be downloaded
 
     # Creation of random sensor data
@@ -287,7 +331,7 @@ try:
 
 
     #We change the image path to the path of the image that was downloaded from MQTT
-    image_path = ".../downloaded_image.jpg"
+    image_path = "/content/downloaded_image.jpg"
 
 
 
@@ -305,7 +349,7 @@ try:
     # Get the current time in UTC
     now_utc = datetime.now(pytz.utc)
 
-    # Convert it to Greece's time zone 
+    # Convert it to Greece's time zone
     greece_time = now_utc.astimezone(pytz.timezone('Europe/Athens'))
 
     # Format the time to a string.  Example of what tme_str contains '2024-01-14_15-30-00'
@@ -380,17 +424,27 @@ try:
     #Our class names.
     class_names= ['Healthy', 'Pseudomonas-Xanthomonas-Septoria', 'Alternaria', 'Cladosporium Leaf Mold', 'Downy Mildew', 'Ash Rot', 'Powdery Mildew']
 
+    num_classes = 7
+    def ConfusionMatrixMetricWrapper(num_classes):
+      def metric_fn():
+          return ConfusionMatrixMetric(num_classes=num_classes)
+      return metric_fn
 
-    #Here we run the model we created
-    model = tf.keras.models.load_model('model.keras', custom_objects={'F1Score': F1Score})
-
+    # Modify the model loading process
+    model = tf.keras.models.load_model(
+        'AgroTips_model (6).keras', 
+        custom_objects={
+            'F1Score': F1Score, 
+            'ConfusionMatrixMetric': ConfusionMatrixMetricWrapper(num_classes=7)  # Specify num_classes here
+        }
+    )
     #we print the model summary
     model.summary()
 
 
-    # The model compilation - make sure ou use the same metrics that you used when creating the model. 
+    # The model compilation - make sure ou use the same metrics that you used when creating the model.
     model.compile(
-        optimizer='adam',  
+        optimizer='adam',
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy', F1Score()]
     )
@@ -407,6 +461,7 @@ try:
     predicted_class_name = class_names[predicted_index]
     confidence_score = prediction[0][predicted_index]
 
+
     # Print the prediction and confidence score
     print(f"Class: {predicted_class_name}, Confidence Score: {confidence_score:.2f}")
 
@@ -418,12 +473,12 @@ try:
 
     #This will be the part of the email that we create the message of what our system understood based on the image it received
     if not predicted_class_name == "Healthy":
-      image_message = """<p><span style="color: green;"><strong>After we looked at your latest image:</strong></span><br>
+      image_message = """<p><strong>After we looked at your latest image:</strong><br>
 
 <br>Our system has indicated that your plants might have """ + predicted_class_name + """. Check the image. If there are is nothing interfering with it, we advice you to contact an agronomist.</p>"""
 
     else:
-      image_message = """"<span style="color: green;"><strong>After we looked at your image:</strong></span><br>
+      image_message = """"<strong>After we looked at your image:</strong><<br>
 
 Our system has indicated that your plants look healthy."""
 
@@ -440,7 +495,7 @@ Our system has indicated that your plants look healthy."""
     Lux = str(received_data['Lux'])
 
     #The sensor data as they they will apeal in the mail.
-    sensor_message = """<p><span style="color: green;"><strong>Here are the results from our sensors:</strong></span><br>
+    sensor_message = """<p><strong>Here are the results from our sensors:</strong><br>
 <ul>
 <li>Electrical Conductivity: """ + Electrical_Conductivity + """</li><br>
 <li>pH: """ + pH + """</li><br>
@@ -530,25 +585,25 @@ Our system has indicated that your plants look healthy."""
         if received_data['Lux'] < 25000:
           sensor_message+="""<span style="color: #f44336;">Suboptimal Lux Levels:</span> Light levels below 20,000 lux are generally insufficient for healthy tomato plant growth, leading to poor development.<br>"""
         elif received_data['Lux'] < 70000:
-          sensor_data+="""Harmful Lux Levels: Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
+          sensor_data+="""<span style="color: #f44336;">Harmful Lux Levels:</span> Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
     elif is_winter and hour in winter_dark_period:
         print("2")   # Light absence is a problem in winter during these hours
         if received_data['Lux'] < 25000:
           sensor_message+="""<span style="color: #f44336;">Suboptimal Lux Levels:</span> Light levels below 20,000 lux are generally insufficient for healthy tomato plant growth, leading to poor development.<br>"""
         elif received_data['Lux'] < 70000:
-          sensor_data+="""Harmful Lux Levels: Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
+          sensor_data+="""<span style="color: #f44336;">armful Lux Levels:</span> Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
     elif is_spring and hour in spring_dark_period:
         print("3")   # Light absence is a problem in spring during these hours
         if received_data['Lux'] < 25000:
           sensor_message+="""<span style="color: #f44336;">Suboptimal Lux Levels:</span> Light levels below 20,000 lux are generally insufficient for healthy tomato plant growth, leading to poor development.<br>"""
         elif received_data['Lux'] < 70000:
-          sensor_data+="""Harmful Lux Levels: Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
+          sensor_data+="""<span style="color: #f44336;">Harmful Lux Levels:</span> Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
     elif is_autumn and hour in autumn_dark_period:
         print("4")   # Light absence is a problem in autumn during these hours
         if received_data['Lux'] < 25000:
           sensor_message+="""<span style="color: #f44336;">Suboptimal Lux Levels:</span> Light levels below 20,000 lux are generally insufficient for healthy tomato plant growth, leading to poor development.<br>"""
         elif received_data['Lux'] < 70000:
-          sensor_data+="""Harmful Lux Levels: Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
+          sensor_data+="""<span style="color: #f44336;">Harmful Lux Levels:</span> Intensities above 70,000 lux can be detrimental, causing leaf burn and increased plant stress."""
 
     sensor_message+="</p>"
 
@@ -596,7 +651,7 @@ Our system has indicated that your plants look healthy."""
         <p>We hope this message finds you in good health and hight spirits!!</p>
         <p>""" + sensor_message + """</p>
         <br><p>""" + image_message + """</p>
-        <p><br><span style="color: green;"><strong>The latest of your plats:</strong></span></p>
+        <p><br><strong>The latest image of your plats:</strong></p>
         <img src="cid:image1" alt="Image" width="600">
         <br><p><i>We have worked hard in order to give you the most professional and valid assessment we can provide based on the image we sent you. However do not forget, that even our model can make mistakes!! It could be a bug on the leaf or anything. We advice to discusing disease matter with your agronomist before trying to fix the problem on your own. We are here to support them. (If you see the same disease all over again for more than 5 times and you changed the view of the camera before doing so, the possibilities that your plants carry a disease are more than 75%. In that case immidiate assistance from a professional is required).</i>
 
@@ -629,16 +684,11 @@ Our system has indicated that your plants look healthy."""
 
     context = ssl.create_default_context()
 
-    # Send the email
-    with smtplib.SMTP('smtp.office365.com', 587) as smtp:
-        smtp.starttls(context=context)
-        smtp.login(email_sender, email_password)
-        smtp.send_message(msg)
-        print("Email sent successfully!")
-
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as smtp:
+      smtp.login(email_sender, email_password)
+      smtp.sendmail(email_sender, email_receiver, msg.as_string())
 
     #Sleep for 5 hours
     time.sleep(5 * 60 * 60)
 except KeyboardInterrupt:
   exit
-
