@@ -12,7 +12,7 @@ from sklearn.metrics import confusion_matrix, f1_score, accuracy_score
 # Define image dimensions, batch size and number of classes of the model.
 img_height = 512
 img_width = 512
-batch_size = 32 #based you you symstem, it might vary
+batch_size = 32 #based your symstem, it might vary
 num_classes = 7
 
 class ConfusionMatrixMetric(tf.keras.metrics.Metric):
@@ -41,16 +41,18 @@ class ConfusionMatrixMetric(tf.keras.metrics.Metric):
         return diagonal_sum / total_sum  # Return accuracy based on confusion matrix
 
     def reset_states(self):
-        # Reset the confusion matrix at the start of each epoch
+        # Reset the confusion matrix, when the next epoch starts
         self.confusion_matrix.assign(tf.zeros((self.num_classes, self.num_classes), dtype=tf.int32))
 
     def print_confusion_matrix(self):
-        # Convert the confusion matrix tensor to a NumPy array for better printing
+        # Convert the confusion matrix tensor to a NumPy arra for printing
         cm = self.confusion_matrix.numpy()
-        np.set_printoptions(threshold=np.inf)  # Ensure full matrix is printed without truncation
+        # Ensure full matrix is printed without truncation.
+        np.set_printoptions(threshold=np.inf)  
         print("\nConfusion Matrix at the end of the epoch:\n")
         for row in cm:
-            print(' '.join(f'{int(val):4}' for val in row))  # Print each row with proper spacing
+            # Print each row with proper spacing
+            print(' '.join(f'{int(val):4}' for val in row))  
 
 
 class PrintConfusionMatrixCallback(tf.keras.callbacks.Callback):
