@@ -140,7 +140,7 @@ data_augmentation = keras.Sequential([
 
 # Load the training dataset
 train_data = tf.keras.preprocessing.image_dataset_from_directory(
-    "thesis_images/",
+    "/thesis_images/",
     labels="inferred",
     label_mode="int",
     class_names= ['Class1-Healthy', 'Class2-Pseudomonas-Xanthomonas-Septoria', 'Class3-Alternaria', 'Class4-Cladosporium Leaf Mold', 'Class5-Downy Mildew', 'Class6-Ash Rot', 'Class7-Powdery Mildew'],
@@ -155,7 +155,7 @@ train_data = tf.keras.preprocessing.image_dataset_from_directory(
 
 # Load the validation dataset
 val_data = tf.keras.preprocessing.image_dataset_from_directory(
-    "thesis_images/",
+    "/thesis_images/",
     labels="inferred",
     label_mode="int",
     class_names= ['Class1-Healthy', 'Class2-Pseudomonas-Xanthomonas-Septoria', 'Class3-Alternaria', 'Class4-Cladosporium Leaf Mold', 'Class5-Downy Mildew', 'Class6-Ash Rot', 'Class7-Powdery Mildew'],
